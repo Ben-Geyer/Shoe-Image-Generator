@@ -16,12 +16,13 @@ NEWSPIDER_MODULE = 'image_scraping.spiders'
 
 
 # Crawl responsibly by identifying yourself (and your website) on the user-agent
-USER_AGENT = 'image_scraping (+http://www.yourdomain.com)'
+USER_AGENT = 'image_scraping (+https://github.com/Ben-Geyer/Shoe-Image-Generator.git)'
 
 # Obey robots.txt rules
 ROBOTSTXT_OBEY = True
 
 # Redis settings
+REDIS_HOST = "redis"
 DUPEFILTER_CLASS = "scrapy_redis.dupefilter.RFPDupeFilter"
 SCHEDULER = "scrapy_redis.scheduler.Scheduler"
 SCHEDULER_PERSIST = True

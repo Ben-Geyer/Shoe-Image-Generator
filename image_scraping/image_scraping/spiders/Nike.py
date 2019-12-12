@@ -1,6 +1,6 @@
 import json
 from scrapy.spiders import Rule
-from shoe_images.items import ShoeImage
+from image_scraping.items import ShoeImage
 from scrapy.linkextractors import LinkExtractor
 from scrapy_redis.spiders import RedisCrawlSpider
 
@@ -18,7 +18,7 @@ class Nike(RedisCrawlSpider):
             item = ShoeImage()
             item["image_urls"] = product["publishedContent"]["properties"]["productCard"]["properties"]["squarishURL"]
             yield item
-        
+
 
 
 
