@@ -14,7 +14,7 @@ NOISE_DIM = 100
 BATCH_SIZE = 32
 
 def make_generator():
-    layer_size = 8
+    layer_size = 4
 
     model = Sequential()
     model.add(layers.Dense(layer_size * layer_size * 256, input_dim = NOISE_DIM))
@@ -42,8 +42,8 @@ def generator_loss(fake_out):
     return cross_entropy(tf.ones_like(fake_out), fake_out)
 
 def make_discriminator():
-    filter_size = 32
-    max_filter = 128
+    filter_size = 64
+    max_filter = 512
     image_shape = (IMAGE_SIZE, IMAGE_SIZE, 3)
 
     model = Sequential()
@@ -76,7 +76,7 @@ def generate_and_save_images(model, epoch, input):
 
     for i in range(pred.shape[0]):
         plt.subplot(side_size, side_size, i + 1)
-        plt.imshow(pred[i])
+        plt.imshow(((pred[i] + 1) * 127.5).astype(np.int32))
         plt.axis("off")
 
     plt.savefig("./generated_images/images_at_epoch_{}.png".format(epoch))
@@ -120,6 +120,8 @@ def train(dataset):
 
         generator_optimizer.apply_gradients(zip(gen_grad, generator.trainable_variables))
         discriminator_optimizer.apply_gradients(zip(disc_grad, discriminator.trainable_variables))
+
+        print("Generator Loss: {}\nDiscriminator Loss: {}".format(gen_loss, disc_loss))
 
     for epoch in range(epochs):
         start_time = time.time()
