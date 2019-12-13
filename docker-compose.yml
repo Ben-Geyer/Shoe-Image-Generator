@@ -10,4 +10,4 @@ services:
     links:
       - redis:redis
     volumes:
-      - ./images:/app/images
+      - ./images:/images

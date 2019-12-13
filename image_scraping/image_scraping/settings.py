@@ -28,7 +28,7 @@ SCHEDULER = "scrapy_redis.scheduler.Scheduler"
 SCHEDULER_PERSIST = True
 
 # Image downloader settings
-IMAGES_STORE = "/home/bgeyer/workspace/presonal/GAN/shoe_images"
+IMAGES_STORE = "/images"
 
 ITEM_PIPELINES = {
     'scrapy.pipelines.images.ImagesPipeline': 1,
