@@ -1,86 +1,147 @@
+import os
+import time
+import math
 import numpy as np
+from tqdm import tqdm
 import tensorflow as tf
+from IPython import display
 import matplotlib.pyplot as plt
+from tensorflow.keras import Sequential, layers, Model, optimizers, losses
 
 
-@np.vectorize
-def get_y(x):
-    return 10 + x ** 2
+IMAGE_SIZE = 32
+NOISE_DIM = 100
+BATCH_SIZE = 32
 
-def sample_data(n = 10000, scale = 100):
-    x = np.random.random((n,)) - 0.5
-    x *= scale
-    return np.vstack((x, get_y(x))).T
+def make_generator():
+    layer_size = 8
 
-def generator(Z, sizes = [16, 16], reuse = False):
-    with tf.variable_scope("generator", reuse = reuse):
-        layer = Z
+    model = Sequential()
+    model.add(layers.Dense(layer_size * layer_size * 256, input_dim = NOISE_DIM))
+    model.add(layers.BatchNormalization())
+    model.add(layers.LeakyReLU())
+    model.add(layers.Reshape((layer_size, layer_size, 256)))
+    assert model.output_shape == (None, layer_size, layer_size, 256)
 
-        for size in sizes:
-            layer = tf.layers.dense(layer, size, activation = tf.nn.leaky_relu)
+    while layer_size < IMAGE_SIZE:
+        layer_size *= 2
+        model.add(layers.UpSampling2D())
+        model.add(layers.Conv2D(256, kernel_size = (3, 3), padding = "same"))
+        model.add(layers.BatchNormalization())
+        model.add(layers.LeakyReLU())
+        assert model.output_shape == (None, layer_size, layer_size, 256)
 
-        out = tf.layers.dense(layer, 2)
+    model.add(layers.Conv2D(3, kernel_size = (3, 3), padding = "same"))
+    model.add(layers.Activation("tanh"))
+    assert model.output_shape == (None, IMAGE_SIZE, IMAGE_SIZE, 3)
 
-    return out
+    return model
 
-def discriminator(X, sizes = [16, 16], reuse = False):
-    with tf.variable_scope("discriminator", reuse = reuse):
-        layer = X
+def generator_loss(fake_out):
+    cross_entropy = losses.BinaryCrossentropy(from_logits = True)
+    return cross_entropy(tf.ones_like(fake_out), fake_out)
 
-        for size in sizes:
-            layer = tf.layers.dense(layer, size, activation = tf.nn.leaky_relu)
+def make_discriminator():
+    filter_size = 32
+    max_filter = 128
+    image_shape = (IMAGE_SIZE, IMAGE_SIZE, 3)
 
-        layer = tf.layers.dense(layer, 2)
-        out = tf.layers.dense(layer, 1)
+    model = Sequential()
+    model.add(layers.Conv2D(filter_size, kernel_size = (3, 3), strides = (2, 2), padding = "same", input_shape = image_shape))
+    model.add(layers.LeakyReLU())
+    model.add(layers.Dropout(0.25))
 
-    return out, layer
+    while filter_size < max_filter:
+        filter_size *= 2
+        model.add(layers.Conv2D(filter_size, kernel_size = (3, 3), strides = (2, 2), padding = "same"))
+        model.add(layers.LeakyReLU())
+        model.add(layers.Dropout(0.25))
 
-def train(n_iter = 10000, d_steps = 10, g_steps = 10, lr = 0.001):
-    # Real samples
-    X = tf.placeholder(tf.float32, [None, 2])
-    # Noise (fake) samples
-    Z = tf.placeholder(tf.float32, [None, 2])
+    model.add(layers.Flatten())
+    model.add(layers.Dense(1))
+    model.add(layers.Activation("sigmoid"))
 
-    generated = generator(Z)
-    r_logits, r_rep = discriminator(X)
-    g_logits, g_rep = discriminator(generated, reuse = True)
+    return model
 
-    def cross_entropy(logits, label_func):
-        return tf.nn.sigmoid_cross_entropy_with_logits(logits = logits, labels = label_func(logits))
+def discriminator_loss(real_out, fake_out):
+    cross_entropy = losses.BinaryCrossentropy(from_logits = True)
+    real_loss = cross_entropy(tf.ones_like(real_out), real_out)
+    fake_loss = cross_entropy(tf.zeros_like(fake_out), fake_out)
+    return real_loss + fake_loss
 
-    disc_loss = tf.reduce_mean(cross_entropy(r_logits, tf.ones_like)) + cross_entropy(g_logits, tf.zeros_like)
-    gen_loss = tf.reduce_mean(cross_entropy(g_logits, tf.ones_like))
+def generate_and_save_images(model, epoch, input):
+    pred = model(input, training = False)
+    side_size = math.sqrt(pred.shape[0])
+    fig = plt.figure(figsize = (side_size, side_size))
 
-    gen_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope = "generator")
-    disc_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope = "discriminator")
+    for i in range(pred.shape[0]):
+        plt.subplot(side_size, side_size, i + 1)
+        plt.imshow(pred[i])
+        plt.axis("off")
 
-    gen_step = tf.train.RMSPropOptimizer(learning_rate = lr).minimize(gen_loss, var_list = gen_vars)
-    disc_step = tf.train.RMSPropOptimizer(learning_rate = lr).minimize(disc_loss, var_list = disc_vars)
+    plt.savefig("./generated_images/images_at_epoch_{}.png".format(epoch))
+    #plt.show()
 
-    session = tf.Session()
-    tf.global_variables_initializer().run(session = session)
+def train(dataset):
+    gen_lr = 1e-4
+    disc_lr = 1e-4
+    epochs = 50
+    num_to_generate = 16
 
-    batch_size = 256
-    x_plot = sample_data()
+    generator = make_generator()
+    discriminator = make_discriminator()
+    generator_optimizer = optimizers.Adam(gen_lr)
+    discriminator_optimizer = optimizers.Adam(disc_lr)
 
-    for i in range(n_iter + 1):
-        X_batch = sample_data(n = batch_size)
-        Z_batch = np.random.uniform(-1., 1., size = [batch_size, 2])
+    checkpoint_dir = './training_checkpoints'
+    checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
+    checkpoint = tf.train.Checkpoint(generator_optimizer = generator_optimizer,
+                                     discriminator_optimizer = discriminator_optimizer,
+                                     generator = generator,
+                                     discriminator = discriminator)
 
-        for _ in range(d_steps):
-            session.run([disc_step, disc_loss], feed_dict = {X: X_batch, Z: Z_batch})
-        session.run([r_rep, g_rep], feed_dict={X: X_batch, Z: Z_batch})
+    seed = tf.random.normal([num_to_generate, NOISE_DIM])
 
-        for _ in range(g_steps):
-            session.run([gen_step, gen_loss], feed_dict={Z: Z_batch})
-        session.run([r_rep, g_rep], feed_dict={X: X_batch, Z: Z_batch})
+    @tf.function
+    def train_step(images):
+        noise = tf.random.normal([BATCH_SIZE, NOISE_DIM])
 
-        if i % 10 == 0:
-            print("Iteration: {}".format(i))
-        if i % 1000 == 0:
-            g_plot = session.run(generated, feed_dict = {Z: Z_batch})
-            plt.plot(x_plot[:,0], x_plot[:,1], "bo")
-            plt.plot(g_plot[:,0], g_plot[:,1], "ro")
-            plt.show()
+        with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
+            generated_images = generator(noise, training = True)
 
-train()
+            real_out = discriminator(images, training = True)
+            fake_out = discriminator(generated_images, training = True)
+
+            gen_loss = generator_loss(fake_out)
+            disc_loss = discriminator_loss(real_out, fake_out)
+
+        gen_grad = gen_tape.gradient(gen_loss, generator.trainable_variables)
+        disc_grad = disc_tape.gradient(disc_loss, discriminator.trainable_variables)
+
+        generator_optimizer.apply_gradients(zip(gen_grad, generator.trainable_variables))
+        discriminator_optimizer.apply_gradients(zip(disc_grad, discriminator.trainable_variables))
+
+    for epoch in range(epochs):
+        start_time = time.time()
+
+        for image_batch in tqdm(dataset):
+            train_step(image_batch)
+
+        display.clear_output(wait = True)
+        generate_and_save_images(generator, epoch + 1, seed)
+
+        if (epoch + 1) % 10 == 0:
+            checkpoint.save(file_prefix = checkpoint_prefix)
+
+        print("Epoch {} completed in {} sec".format(epoch + 1, time.time() - start_time))
+
+    display.clear_output(wait = True)
+    generate_and_save_images(generator, epochs, seed)
+
+def main():
+    training_set = np.load("training_images.npy").astype("float32")
+    training_set = tf.data.Dataset.from_tensor_slices(training_set).shuffle(training_set.shape[0]).batch(BATCH_SIZE)
+    train(training_set)
+
+if __name__ == "__main__":
+    main()

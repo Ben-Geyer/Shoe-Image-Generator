@@ -2,7 +2,7 @@ import os
 import numpy as np
 from PIL import Image
 
-IMAGE_SIZE = 128
+IMAGE_SIZE = 32
 IMAGE_DIR = "images/full"
 
 def main():
