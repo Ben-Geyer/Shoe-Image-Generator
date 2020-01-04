@@ -1,151 +1,177 @@
-import os
-import time
-import math
 import numpy as np
-from tqdm import tqdm
-import tensorflow as tf
-from IPython import display
 import matplotlib.pyplot as plt
-from tensorflow.keras import Sequential, layers, Model, optimizers, losses
+# Uses tensorflow version 1.x
+from tensorflow.keras import layers
+from tensorflow.keras.models import Model
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.preprocessing import image
 
 
-IMAGE_SIZE = 32
-NOISE_DIM = 100
-BATCH_SIZE = 32
-MOMENTUM = 0.8
+# Hyperparameters
+NOISE_SIZE = 100
+INPUT_SHAPE = (128, 128, 3)
+BATCH_NORM_MOMENTUM = 0.9
+LEAKY_RELU_ALPHA = 0.1
+LEARNING_RATE = 0.0002
+BATCH_SIZE = 16
+N_EPOCHS = 200
+LABEL_SMOOTHING = 0.1
+LABEL_FLIP_PROB = 0.05
+NUM_GEN_FILTERS = 256
+NUM_DISC_FILTERS = 128
 
 def make_generator():
-    layer_size = 4
+    input_layer = layers.Input(shape = (NOISE_SIZE,))
+    gen_shape = INPUT_SHAPE[0] // 2
 
-    model = Sequential()
-    model.add(layers.Dense(layer_size * layer_size * 256, input_dim = NOISE_DIM))
-    model.add(layers.BatchNormalization(momentum = MOMENTUM))
-    model.add(layers.LeakyReLU())
-    model.add(layers.Reshape((layer_size, layer_size, 256)))
-    assert model.output_shape == (None, layer_size, layer_size, 256)
+    # Fully connected hidden layer
+    hidden = layers.Dense(NUM_GEN_FILTERS * gen_shape * gen_shape, activation = "relu")(input_layer)
+    hidden = layers.BatchNormalization(momentum = BATCH_NORM_MOMENTUM)(hidden)
+    hidden = layers.LeakyReLU(alpha = LEAKY_RELU_ALPHA)(hidden)
+    hidden = layers.Reshape((gen_shape, gen_shape, NUM_GEN_FILTERS))(hidden)
+    # Output shape (gen_shape, gen_shape, NUM_GEN_FILTERS)
 
-    while layer_size < IMAGE_SIZE:
-        layer_size *= 2
-        model.add(layers.UpSampling2D())
-        model.add(layers.Conv2D(256, kernel_size = (3, 3), padding = "same"))
-        model.add(layers.BatchNormalization(momentum = MOMENTUM))
-        model.add(layers.LeakyReLU())
-        assert model.output_shape == (None, layer_size, layer_size, 256)
+    hidden = layers.Conv2D(NUM_GEN_FILTERS, kernel_size = 5, strides = 1,padding = "same")(hidden)
+    hidden = layers.BatchNormalization(momentum = BATCH_NORM_MOMENTUM)(hidden)
+    hidden = layers.LeakyReLU(alpha = LEAKY_RELU_ALPHA)(hidden)
+    # Output shape (gen_shape, gen_shape, NUM_GEN_FILTERS)
 
-    model.add(layers.Conv2D(3, kernel_size = (3, 3), padding = "same"))
-    model.add(layers.Activation("tanh"))
-    assert model.output_shape == (None, IMAGE_SIZE, IMAGE_SIZE, 3)
+    # Upsampling and convolutional hidden layer
+    hidden = layers.Conv2DTranspose(NUM_GEN_FILTERS, kernel_size = 4, strides = 2, padding = "same")(hidden)
+    hidden = layers.BatchNormalization(momentum = BATCH_NORM_MOMENTUM)(hidden)
+    hidden = layers.LeakyReLU(alpha = LEAKY_RELU_ALPHA)(hidden)
+    # Output shape (gen_shape * 2, gen_shape * 2, NUM_GEN_FILTERS)
 
+    hidden = layers.Conv2D(NUM_GEN_FILTERS, kernel_size = 5, strides = 1, padding = "same")(hidden)
+    hidden = layers.BatchNormalization(momentum = BATCH_NORM_MOMENTUM)(hidden)
+    hidden = layers.LeakyReLU(alpha = LEAKY_RELU_ALPHA)(hidden)
+    # Output shape (gen_shape * 2, gen_shape * 2, NUM_GEN_FILTERS)
+
+    hidden = layers.Conv2D(NUM_GEN_FILTERS, kernel_size = 5, strides = 1, padding = "same")(hidden)
+    hidden = layers.BatchNormalization(momentum = BATCH_NORM_MOMENTUM)(hidden)
+    hidden = layers.LeakyReLU(alpha = LEAKY_RELU_ALPHA)(hidden)
+    # Output shape (gen_shape * 2, gen_shape * 2, NUM_GEN_FILTERS)
+
+    hidden = layers.Conv2D(3, kernel_size = 5, strides = 1, padding = "same")(hidden)
+    output_layer = layers.Activation("tanh")(hidden)
+    # Output shape (gen_shape * 2, gen_shape * 2, 3)
+
+    model = Model(input_layer, output_layer)
     return model
-
-def generator_loss(fake_out):
-    cross_entropy = losses.BinaryCrossentropy(from_logits = True)
-    return cross_entropy(tf.ones_like(fake_out), fake_out)
 
 def make_discriminator():
-    filter_size = 32
-    max_filter = 512
-    dropout = 0.25
-    image_shape = (IMAGE_SIZE, IMAGE_SIZE, 3)
+    input_layer = layers.Input(shape = INPUT_SHAPE)
 
-    model = Sequential()
-    model.add(layers.Conv2D(filter_size, kernel_size = (3, 3), strides = (2, 2), padding = "same", input_shape = image_shape))
-    model.add(layers.LeakyReLU())
-    model.add(layers.Dropout(dropout))
+    hidden = layers.Conv2D(NUM_DISC_FILTERS, kernel_size = 3, strides = 1, padding = "same")(input_layer)
+    hidden = layers.BatchNormalization(momentum = BATCH_NORM_MOMENTUM)(hidden)
+    hidden = layers.LeakyReLU(alpha = LEAKY_RELU_ALPHA)(hidden)
+    # Output shape (INPUT_SHAPE[0], INPUT_SHAPE[0], NUM_DISC_FILTERS)
 
-    while filter_size < max_filter:
-        filter_size *= 2
-        model.add(layers.Conv2D(filter_size, kernel_size = (3, 3), strides = (2, 2), padding = "same"))
-        model.add(layers.BatchNormalization(momentum = MOMENTUM))
-        model.add(layers.LeakyReLU(alpha = 0.2))
-        model.add(layers.Dropout(dropout))
+    hidden = layers.Conv2D(NUM_DISC_FILTERS, kernel_size = 4, strides = 2, padding = "same")(hidden)
+    hidden = layers.BatchNormalization(momentum = BATCH_NORM_MOMENTUM)(hidden)
+    hidden = layers.LeakyReLU(alpha = LEAKY_RELU_ALPHA)(hidden)
+    # Output shape (INPUT_SHAPE[0] / 2, INPUT_SHAPE[0] / 2, NUM_DISC_FILTERS)
 
-    model.add(layers.Flatten())
-    model.add(layers.Dense(1))
-    model.add(layers.Activation("sigmoid"))
+    hidden = layers.Conv2D(NUM_DISC_FILTERS, kernel_size = 4, strides = 2, padding = "same")(hidden)
+    hidden = layers.BatchNormalization(momentum = BATCH_NORM_MOMENTUM)(hidden)
+    hidden = layers.LeakyReLU(alpha = LEAKY_RELU_ALPHA)(hidden)
+    # Output shape (INPUT_SHAPE[0] / 4, INPUT_SHAPE[0] / 4, NUM_DISC_FILTERS)
 
+    hidden = layers.Conv2D(NUM_DISC_FILTERS, kernel_size = 4, strides = 2, padding = "same")(hidden)
+    hidden = layers.BatchNormalization(momentum = BATCH_NORM_MOMENTUM)(hidden)
+    hidden = layers.LeakyReLU(alpha = LEAKY_RELU_ALPHA)(hidden)
+    # Output shape (INPUT_SHAPE[0] / 8, INPUT_SHAPE[0] / 8, NUM_DISC_FILTERS)
+
+    # Fully connected output layer
+    hidden = layers.Flatten()(hidden)
+    hidden = layers.Dropout(0.4)(hidden)
+    output_layer = layers.Dense(1, activation = "sigmoid")(hidden)
+    # Output shape (1,)
+
+    model = Model(input_layer, output_layer)
     return model
 
-def discriminator_loss(real_out, fake_out):
-    cross_entropy = losses.BinaryCrossentropy(from_logits = True)
-    real_loss = cross_entropy(tf.ones_like(real_out), real_out)
-    fake_loss = cross_entropy(tf.zeros_like(fake_out), fake_out)
-    return real_loss + fake_loss
+def gen_noise(num_samples):
+    return np.random.normal(0, 1, size = (num_samples, NOISE_SIZE))
 
-def generate_and_save_images(model, epoch, input):
-    pred = model(input, training = False)
-    side_size = math.sqrt(pred.shape[0])
-    fig = plt.figure(figsize = (side_size, side_size))
+def change_labels(orig_labels):
+    smoothing = np.random.uniform(low = 0.0, high = LABEL_SMOOTHING, size = (BATCH_SIZE, 1))
+    labels = np.absolute(orig_labels - smoothing)
+    flipped_idx = np.random.choice(np.arange(len(labels)), size = int(LABEL_FLIP_PROB * len(labels)))
+    labels[flipped_idx] = 1 - labels[flipped_idx]
+    return labels
 
-    for i in range(pred.shape[0]):
-        plt.subplot(side_size, side_size, i + 1)
-        plt.imshow(((pred[i] + 1) * 127.5).numpy().astype(np.int32))
-        plt.axis("off")
+def show_images(generator, epoch):
+    # Generate 9 images
+    gen_images = generator.predict(gen_noise(9))
 
-    plt.savefig("./generated_images/current/images_at_epoch_{}.png".format(epoch))
-    #plt.show()
+    # Plot images
+    figure, axes = plt.subplots(3, 3)
+    count = 0
+    for i in range(3):
+      for j in range(3):
+        axes[i, j].imshow(image.array_to_img(gen_images[count], scale = True))
+        axes[i, j].axis("off")
+        count += 1
+
+    plt.savefig("./generated_images/current/images_at_epoch_{}".format(epoch))
+    plt.show()
     plt.close()
 
-def train(dataset):
-    gen_lr = 1.5e-4
-    disc_lr = 1.5e-4
-    epochs = 100
-    num_to_generate = 16
-
-    generator = make_generator()
+def make_models():
+    # Make discriminator
     discriminator = make_discriminator()
-    generator_optimizer = optimizers.Adam(gen_lr)
-    discriminator_optimizer = optimizers.Adam(disc_lr)
+    discriminator.compile(optimizer = Adam(LEARNING_RATE, 0.5), loss = "binary_crossentropy", metrics = ["accuracy"])
+    discriminator.trainable = False
 
-    checkpoint_dir = './training_checkpoints/current'
-    checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
-    checkpoint = tf.train.Checkpoint(generator_optimizer = generator_optimizer,
-                                     discriminator_optimizer = discriminator_optimizer,
-                                     generator = generator,
-                                     discriminator = discriminator)
+    # Make generator
+    generator = make_generator()
 
-    seed = tf.random.normal([num_to_generate, NOISE_DIM])
+    # Make GAN
+    gan_input = layers.Input(shape = (NOISE_SIZE,))
+    x = generator(gan_input)
+    gan_output = discriminator(x)
+    gan = Model(gan_input, gan_output)
+    gan.compile(optimizer = Adam(LEARNING_RATE, 0.5), loss = "binary_crossentropy")
 
-    @tf.function
-    def train_step(images):
-        noise = tf.random.normal([BATCH_SIZE, NOISE_DIM])
+    return gan, discriminator, generator
 
-        with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
-            generated_images = generator(noise, training = True)
+def train(train_set):
+    gan, discriminator, generator = make_models()
+    num_batches = train_set.shape[0] // BATCH_SIZE
 
-            real_out = discriminator(images, training = True)
-            fake_out = discriminator(generated_images, training = True)
+    for epoch in range(N_EPOCHS):
+        total_d_loss = 0.
+        total_g_loss = 0.
 
-            gen_loss = generator_loss(fake_out)
-            disc_loss = discriminator_loss(real_out, fake_out)
+        for batch_idx in range(num_batches):
+            # Get the next batch of real and fake images
+            real_images = train_set[(batch_idx * BATCH_SIZE):((batch_idx + 1) * BATCH_SIZE)]
+            fake_images = generator.predict(gen_noise(BATCH_SIZE))
 
-        gen_grad = gen_tape.gradient(gen_loss, generator.trainable_variables)
-        disc_grad = disc_tape.gradient(disc_loss, discriminator.trainable_variables)
+            # Smooth and flip labels
+            real_labels = change_labels(np.zeros((BATCH_SIZE, 1)))
+            fake_labels = change_labels(np.ones((BATCH_SIZE, 1)))
 
-        generator_optimizer.apply_gradients(zip(gen_grad, generator.trainable_variables))
-        discriminator_optimizer.apply_gradients(zip(disc_grad, discriminator.trainable_variables))
+            # Train discriminator on real and generated data
+            d_loss_disc = discriminator.train_on_batch(real_images, real_labels)
+            d_loss_gen = discriminator.train_on_batch(fake_images, fake_labels)
 
-    for epoch in range(epochs):
-        start_time = time.time()
+            # Train generator
+            noise_data = gen_noise(BATCH_SIZE)
+            g_loss = gan.train_on_batch(noise_data, np.zeros((BATCH_SIZE, 1)))
 
-        for image_batch in tqdm(dataset):
-            train_step(image_batch)
-
-        display.clear_output(wait = True)
-        generate_and_save_images(generator, epoch + 1, seed)
+            total_d_loss += 0.5 * np.add(d_loss_disc, d_loss_gen)[0]
+            total_g_loss += g_loss
 
         if (epoch + 1) % 10 == 0:
-            checkpoint.save(file_prefix = checkpoint_prefix)
+            generator.save_weights("./training_checkpoints/epoch_{}_checkpoint".format(epoch + 1))
+            print("Saved checkpoint")
 
-        print("Epoch {} completed in {} sec".format(epoch + 1, time.time() - start_time))
-
-    display.clear_output(wait = True)
-    generate_and_save_images(generator, epochs, seed)
-
-def main():
-    training_set = np.load("training_images.npy").astype("float32")
-    training_set = tf.data.Dataset.from_tensor_slices(training_set).shuffle(training_set.shape[0]).batch(BATCH_SIZE)
-    train(training_set)
+        print("Epoch: {}, Generator Loss: {}, Discriminator Loss: {}".format(epoch + 1, total_g_loss / num_batches, total_d_loss / num_batches))
+        show_images(generator, epoch)
 
 if __name__ == "__main__":
-    main()
+    # Get training images
+    train_set = np.load("./training_images_size128.npy").astype("float32")
+    train(train_set)

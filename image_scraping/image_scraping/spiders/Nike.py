@@ -22,7 +22,7 @@ class Nike(RedisCrawlSpider):
         for product in json_response["objects"]:
             # Skip item if it is not a shoe
             subtitle = product["publishedContent"]["properties"]["subtitle"]
-            if not subtitle or not "shoe" in subtitle.lower():
+            if not subtitle or (not "shoe" in subtitle.lower() and not "cleat" in subtitle.lower()):
                 continue
 
             item = ShoeImage()
