@@ -1,0 +1,23 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: An AWS Serverless Specification template describing your function.
+Resources:
+  shoeGanGenerate:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: generate.generate_handler
+      Runtime: python3.6
+      CodeUri: .
+      Description: ''
+      MemorySize: 2048
+      Timeout: 30
+      Role: >-
+        arn:aws:iam::888989258747:role/service-role/shoeGanGenerate-role-gu6g87l2
+      Events:
+        Api1:
+          Type: Api
+          Properties:
+            Path: /shoeGanGenerate
+            Method: ANY
+      Layers:
+        - 'arn:aws:lambda:us-west-2:347034527139:layer:tf_keras_pillow:1'
