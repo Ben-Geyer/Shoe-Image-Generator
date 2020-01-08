@@ -35,6 +35,54 @@ function load_card(image) {
   $('#shoe-cards > div:nth-last-child(2) [data-toggle="popover"]').popover();
 }
 
+function display_warning() {
+  var warning_msg = "A new server is starting, this may take slightly longer"
+  $("#generate button").removeClass("btn-success").removeClass("btn-danger").addClass("btn-warning");
+  $("#generate button").html(
+    '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> ' + warning_msg
+  );
+}
+
+function display_error() {
+  $("#generate button").prop("disabled", false);
+  $("#generate button").html("An error occurred. Click to try again.");
+  $("#generate button").removeClass("btn-success").removeClass("btn-warning").addClass("btn-danger");
+}
+
+function send_image_request(errback) {
+  $.ajax({
+    timeout: 30000,
+    type: "GET",
+    async: false,
+    url: "https://jpotdr65xi.execute-api.us-west-2.amazonaws.com/default/shoeGanGenerate",
+    success: function (result) {
+      load_card(result["images"][0]["name"]);
+      $("#generate button").prop("disabled", false);
+      $("#generate button").html("Generate!");
+      $("#generate button").removeClass("btn-danger").removeClass("btn-warning").addClass("btn-success");
+    },
+    error: function (result) {
+      errback();
+    }
+  });
+}
+
+function generate_image(num_tries) {
+  if (num_tries > 1) {
+    send_image_request(function () {
+      display_warning();
+      setTimeout(function () {
+        generate_image(num_tries - 1);
+      }, 30000)
+    });
+  }
+  else {
+    send_image_request(function () {
+      display_error();
+    });
+  }
+}
+
 $(document).ready(function () {
   $("#generate button").click(function () {
     $(this).prop("disabled", true);
@@ -42,22 +90,7 @@ $(document).ready(function () {
       '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Loading...'
     );
 
-    $.ajax({
-      type: "POST",
-      data: null,
-      url: "https://jpotdr65xi.execute-api.us-west-2.amazonaws.com/default/shoeGanGenerate",
-      success: function (result) {
-        load_card(result["images"][0]["name"]);
-        $("#generate button").prop("disabled", false);
-        $("#generate button").html("Generate!");
-        $("#generate button").removeClass("btn-danger").addClass("btn-success");
-      },
-      error: function (result) {
-        console.log(result)
-        $("#generate button").prop("disabled", false);
-        $("#generate button").html("An error occurred. Click to try again.");
-        $("#generate button").removeClass("btn-success").addClass("btn-danger");
-      }
-    });
+    // Retry image generation if lambda cold start causes a timeout
+    generate_image(2);
   });
 });
