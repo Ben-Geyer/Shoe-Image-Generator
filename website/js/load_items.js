@@ -53,7 +53,6 @@ function send_image_request(errback) {
   $.ajax({
     timeout: 30000,
     type: "GET",
-    async: false,
     url: "https://jpotdr65xi.execute-api.us-west-2.amazonaws.com/default/shoeGanGenerate",
     success: function (result) {
       load_card(result["images"][0]["name"]);
